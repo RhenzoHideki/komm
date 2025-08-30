@@ -46,9 +46,9 @@ class LempelZiv77Code:
     """
 
     source_cardinality: int
+    window_size: int 
+    lookahead_size: int
     target_cardinality: int = 2
-    window_size: int = 4096
-    lookahead_size: int = 18
 
     def __post_init__(self) -> None:
         if self.source_cardinality < 2:
@@ -73,35 +73,32 @@ class LempelZiv77Code:
         lookahead: np.ndarray,
     ) -> tuple[int, int]:
         """
-        Return (d, l) with the longest match of 'lookahead' in 'window'.
+        Return (d, l) allowing overlap (as in LZ77 decoding).
         d = distance back from current position to the start of match (>=1),
-        l = matched length.
-        If no match, return (0, 0).
+        l = matched length. If no match, return (0, 0).
         """
-        if window.size == 0:
+        n = window.size
+        if n == 0 or lookahead.size == 0:
             return 0, 0
 
-        max_l = 0
         best_d = 0
+        max_l = 0
 
-        # Naive search: try every starting pos in window
-        # window[-d] is last element; distance d in 1..len(window)
-        for start in range(window.size):
-            # max match length at this start
+        # Try every start position in the window
+        for start in range(n):
+            d = n - start            # distance from current position
+            if d <= 0:
+                continue
+
+            # Compare with overlap: the source is periodic with period d
             l = 0
-            # Compare sequentially without overrunning bounds
-            while (
-                l < lookahead.size
-                and start + l < window.size
-                and window[start + l] == lookahead[l]
-            ):
+            while l < lookahead.size and window[start + (l % d)] == lookahead[l]:
                 l += 1
+
             if l > max_l:
                 max_l = l
-                best_d = window.size - start  # distance from current pos
-
-                # Early exit if we matched the entire lookahead
-                if max_l == lookahead.size:
+                best_d = d
+                if max_l == lookahead.size:  # can't do better
                     break
 
         if max_l == 0:
@@ -141,6 +138,7 @@ class LempelZiv77Code:
             if i == n - 1:
                 d, l = 0, 0
                 c = int(x[i])
+                print(f"Encoding triple: (d={d}, l={l}, c={c}) at position {i}")
                 out.extend(integer_to_symbols(d, base=T, width=D))
                 out.extend(integer_to_symbols(l, base=T, width=Lw))
                 out.extend(integer_to_symbols(c, base=T, width=M))
@@ -166,7 +164,7 @@ class LempelZiv77Code:
                 c = int(x[i + l])
                 step = l + 1  # consume l matched + 1 following char
 
-            # Emit triple (d,l,c) in base T.
+            print(f"Encoding triple: (d={d}, l={l}, c={c}) at position {i}")
             out.extend(integer_to_symbols(d, base=T, width=D))
             out.extend(integer_to_symbols(l, base=T, width=Lw))
             out.extend(integer_to_symbols(c, base=T, width=M))
@@ -178,54 +176,53 @@ class LempelZiv77Code:
         return np.array(out, dtype=int)
 
     def decode(self, input: npt.ArrayLike) -> npt.NDArray[np.integer]:
-        r"""
-        Decode a base-T stream of concatenated triples (d, l, c) back to source symbols.
+        T = self.target_cardinality
+        S = self.source_cardinality
+        D, Lw, M = self._D, self._Lw, self._M
 
-        Input:
-            input: 1D array with elements in [0:T). Must be a valid output of `encode`.
-
-        Output:
-            1D array with elements in [0:S).
-        """
         y = np.asarray(input, dtype=int)
         if y.ndim != 1:
             raise ValueError("'input' must be a 1D array")
         if y.size == 0:
             return np.array([], dtype=int)
-        if np.any((y < 0) | (y >= self.target_cardinality)):
-            raise ValueError("encoded symbols out of range")
-
-        T = self.target_cardinality
-        D, Lw, M = self._D, self._Lw, self._M
+        if np.any((y < 0) | (y >= T)):
+            raise ValueError("encoded symbols out of range for base T")
 
         out: list[int] = []
-
         i = 0
-        total_triple_syms = D + Lw + M
+        triple_syms = D + Lw + M
         pbar = tqdm(total=y.size, desc="Decompressing LZ77", delay=2.5)
 
-        while i + total_triple_syms <= y.size:
-            d = symbols_to_integer(y[i : i + D], base=T)
-            i += D
-            l = symbols_to_integer(y[i : i + Lw], base=T)
-            i += Lw
-            c = symbols_to_integer(y[i : i + M], base=T)
-            i += M
-            pbar.update(total_triple_syms)
+        while i + triple_syms <= y.size:
+            d = symbols_to_integer(y[i : i + D], base=T); i += D
+            l = symbols_to_integer(y[i : i + Lw], base=T); i += Lw
+            c = symbols_to_integer(y[i : i + M], base=T); i += M
+            pbar.update(triple_syms)
 
-            # Reconstruct match
-            if d == 0 or l == 0:
-                # no match, just output c
+            # sanity checks against malformed streams
+            if c >= S:
+                raise ValueError(f"Invalid stream: symbol c={c} not in [0,{S-1}]")
+            if d == 0 and l != 0:
+                raise ValueError("Invalid stream: d=0 must imply l=0")
+            if l > self.lookahead_size:
+                raise ValueError("Invalid stream: length exceeds lookahead_size")
+
+            if d == 0 and l == 0:
                 out.append(c)
-            else:
-                start = len(out) - d
-                if start < 0:
-                    raise ValueError("Invalid stream: distance exceeds produced output")
-                # Copy l symbols (allow overlap, as in true LZ77)
-                for k in range(l):
-                    out.append(out[start + k])
-                # Then append c
-                out.append(c)
+                continue
+
+            # match copy with overlap (standard LZ77 behavior)
+            start = len(out) - d
+            if start < 0:
+                raise ValueError("Invalid stream: distance exceeds produced output")
+            for k in range(l):
+                out.append(out[start + k])  # may reference elements appended in this loop
+            out.append(c)
 
         pbar.close()
+
+        if i != y.size:
+            # trailing garbage / truncated triple
+            raise ValueError("Invalid stream: leftover symbols not forming a complete triple")
+
         return np.array(out, dtype=int)

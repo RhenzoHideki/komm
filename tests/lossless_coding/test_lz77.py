@@ -5,7 +5,12 @@ import komm
 
 
 def test_lz77_empty_and_single():
-    code = komm.LempelZiv77Code(2, 2, window_size=16, lookahead_size=4)
+    code = komm.LempelZiv77Code(
+        source_cardinality=2,
+        window_size=16,
+        lookahead_size=4,
+        target_cardinality=2
+    )
     assert code.encode([]).tolist() == []
     assert code.decode([]).tolist() == []
     for symbol in [0, 1]:
@@ -15,14 +20,22 @@ def test_lz77_empty_and_single():
 
 @pytest.mark.parametrize("source_cardinality", [2, 4, 8])
 def test_lz77_roundtrip_random(source_cardinality):
-    code = komm.LempelZiv77Code(source_cardinality, 2, window_size=32, lookahead_size=8)
+    code = komm.LempelZiv77Code(source_cardinality,
+                                window_size=32,
+                                lookahead_size=8,
+                                target_cardinality=2
+                                )
+    
     msg = np.random.randint(0, source_cardinality, size=100).tolist()
     np.testing.assert_equal(code.decode(code.encode(msg)), msg)
 
 
 @pytest.mark.parametrize("k", range(2, 6))
 def test_lz77_zero_runs(k):
-    code = komm.LempelZiv77Code(2, 2, window_size=32, lookahead_size=8)
+    code = komm.LempelZiv77Code(source_cardinality=2,
+                                window_size=32,
+                                lookahead_size=8,
+                                target_cardinality=2)
     msg = []
     for r in range(1, k + 1):
         msg.extend([0] * r)
@@ -32,7 +45,10 @@ def test_lz77_zero_runs(k):
 
 @pytest.mark.parametrize("k", range(2, 5))
 def test_lz77_worst_case(k):
-    code = komm.LempelZiv77Code(2, 2, window_size=64, lookahead_size=16)
+    code = komm.LempelZiv77Code(source_cardinality=2,
+                                window_size=64,
+                                lookahead_size=16
+                                , target_cardinality=2)
     msg = []
     for r in range(1, k + 1):
         for bits in product([0, 1], repeat=r):
@@ -40,3 +56,27 @@ def test_lz77_worst_case(k):
     compressed = code.encode(msg)
     np.testing.assert_equal(code.decode(compressed), msg)
     assert len(compressed) <= len(msg) * 10  # sanity bound
+
+@pytest.mark.parametrize(
+    "alphabet, message, window_size, lookahead_size, len_compressed",
+    [
+        #[Abrantes, p. 26]
+        (
+            "ABC",
+            "AAAABABCCAABACCAAAABC",
+            12,
+            4,
+            49,            
+        ),
+    ],
+)
+def test_lz77_examples(alphabet, message, window_size, lookahead_size, len_compressed):
+    code = komm.LempelZiv77Code(
+        source_cardinality=len(alphabet),
+        target_cardinality=3,
+        window_size=window_size,
+        lookahead_size=lookahead_size)
+    msg_indices = [alphabet.index(char) for char in message]
+    compressed = code.encode(msg_indices)
+    assert len(compressed) == len_compressed
+    np.testing.assert_equal(code.decode(compressed), msg_indices)
