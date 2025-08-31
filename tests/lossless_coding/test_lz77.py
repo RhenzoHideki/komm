@@ -76,7 +76,39 @@ def test_lz77_examples(alphabet, message, window_size, lookahead_size, len_compr
         target_cardinality=3,
         window_size=window_size,
         lookahead_size=lookahead_size)
+    
     msg_indices = [alphabet.index(char) for char in message]
     compressed = code.encode(msg_indices)
+    
+    decompressed = code.decode(compressed)
+    
+    assert decompressed == msg_indices, f"Decompressed: {decompressed}, Expected: {msg_indices}"
+    np.testing.assert_equal(code.decode(compressed), msg_indices)
+
+
+@pytest.mark.parametrize(
+    "alphabet, message, window_size, lookahead_size, len_compressed",
+    [
+        #[Abrantes, p. 26]
+        (
+            "ABC",
+            "AAAABABCCAABACCAAAABC",
+            12,
+            4,
+            9*7,            
+        ),
+    ],
+)
+def test_lz77_examples(alphabet, message, window_size, lookahead_size, len_compressed):
+    code = komm.LempelZiv77Code(
+        source_cardinality=len(alphabet),
+        target_cardinality=2,
+        window_size=window_size,
+        lookahead_size=lookahead_size)
+    
+    msg_indices = [alphabet.index(char) for char in message]
+    compressed = code.encode(msg_indices)
+    
+    
     assert len(compressed) == len_compressed
     np.testing.assert_equal(code.decode(compressed), msg_indices)

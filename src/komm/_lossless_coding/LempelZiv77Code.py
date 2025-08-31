@@ -45,10 +45,10 @@ class LempelZiv77Code:
         True
     """
 
-    source_cardinality: int
-    window_size: int 
-    lookahead_size: int
-    target_cardinality: int = 2
+    source_cardinality: float
+    window_size: float 
+    lookahead_size: float
+    target_cardinality: float = 2
 
     def __post_init__(self) -> None:
         if self.source_cardinality < 2:
@@ -63,9 +63,14 @@ class LempelZiv77Code:
         # Precompute field widths in base T.
         T = self.target_cardinality
         S = self.source_cardinality
-        self._D = max(1, ceil(log(self.window_size + 1, T)))  # distance 0..W
-        self._Lw = max(1, ceil(log(self.lookahead_size + 1, T)))  # length 0..L
-        self._M = max(1, ceil(log(S, T)))  # symbol 0..S-1
+        
+        self._D = max(1, ceil(float(log(self.window_size + 1, T))))  # distance 0..W
+        self._Lw = max(1, ceil(float(log(self.lookahead_size + 1, T))))  # length 0..L
+        self._M = max(1, ceil(float(log(S, T))))  # symbol 0..S-1
+        
+        print(self.window_size, self.lookahead_size, self.source_cardinality,T,S)
+        print(self._D, self._Lw, self._M)
+        
 
     def _find_longest_match(
         self,
