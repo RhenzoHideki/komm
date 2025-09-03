@@ -112,3 +112,30 @@ def test_lz77_examples(alphabet, message, window_size, lookahead_size, len_compr
     
     assert len(compressed) == len_compressed
     np.testing.assert_equal(code.decode(compressed), msg_indices)
+    
+@pytest.mark.parametrize(
+    "alphabet, message, window_size, lookahead_size, len_compressed",
+    [
+        #[https://blog.coderspirit.xyz/blog/2023/06/04/exploring-the-lz77-algorithm]
+        (
+            "abdkr",
+            "abadakadabra",
+            8,
+            4,
+            (ceil(np.log2(8+1)) + ceil(np.log2(4+1)) + ceil(np.log2(5)))*7,            
+        ),
+    ],
+)
+def test_lz77_examples(alphabet, message, window_size, lookahead_size, len_compressed):
+    code = komm.LempelZiv77Code(
+        source_cardinality=len(alphabet),
+        target_cardinality=2,
+        window_size=window_size,
+        lookahead_size=lookahead_size)
+    
+    msg_indices = [alphabet.index(char) for char in message]
+    compressed = code.encode(msg_indices)
+    
+    
+    assert len(compressed) == len_compressed
+    np.testing.assert_equal(code.decode(compressed), msg_indices)
