@@ -1,5 +1,5 @@
 from itertools import product
-from math import ceil, log
+from math import ceil
 
 import numpy as np
 import pytest
@@ -86,7 +86,7 @@ def test_lz77_examples(alphabet, message, window_size, lookahead_size, len_compr
     msg_indices = [alphabet.index(char) for char in message]
 
     # Add verbose=True to see the triples being generated
-    compressed = code.encode(msg_indices, verbose=True)
+    compressed = code.encode(msg_indices)
 
     assert len(compressed) == len_compressed
     np.testing.assert_equal(code.decode(compressed), msg_indices)

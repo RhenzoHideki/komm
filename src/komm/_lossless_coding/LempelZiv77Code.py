@@ -195,9 +195,77 @@ class LempelZiv77Code:
 
         return best_d, max_l
 
-    def encode(
-        self, input: npt.ArrayLike, verbose: bool = False
-    ) -> npt.NDArray[np.integer]:
+    def source_to_triples(self, input: npt.ArrayLike):
+        x = np.asarray(input, dtype=int)
+        W = self._window_size
+        L = self._lookahead_size
+        n = x.size
+        i = 0
+        triples: list[tuple[int, int, int]] = []
+        # Store reference for hash table optimization
+        self._current_data = x
+        self._init_hash_table()
+        while i < n:
+            if i == n - 1:
+                d, l = 0, 0
+                c = int(x[i])
+                triples.append((d, l, c))
+                i += 1
+                continue
+            win_start = max(0, i - W)
+            window = x[win_start:i]
+            max_l = min(L, n - i - 1)
+            lookahead = x[i : i + max_l]
+            self._update_hash_table(x, i)
+            d, l = self._find_longest_match(window, lookahead)
+            if d == 0 or l == 0:
+                d, l, c = 0, 0, int(x[i])
+                step = 1
+            else:
+                c = int(x[i + l])
+                step = l + 1
+            triples.append((d, l, c))
+            i += step
+        return triples
+
+    def triples_to_target(self, triples: list[tuple[int, int, int]]):
+        D, Lw, M = self._D, self._Lw, self._M
+        out: list[int] = []
+        for d, l, c in triples:
+            out.extend(integer_to_symbols(d, base=self._target_cardinality, width=D))
+            out.extend(integer_to_symbols(l, base=self._target_cardinality, width=Lw))
+            out.extend(integer_to_symbols(c, base=self._target_cardinality, width=M))
+        return np.array(out, dtype=int)
+
+    def target_to_triples(self, input: npt.ArrayLike) -> list[tuple[int, int, int]]:
+        T = self._target_cardinality
+        D, Lw, M = self._D, self._Lw, self._M
+        y = np.asarray(input, dtype=int)
+        triples: list[tuple[int, int, int]] = []
+        i = 0
+        while i + D + Lw + M <= y.size:
+            d = symbols_to_integer(y[i : i + D], base=T)
+            i += D
+            l = symbols_to_integer(y[i : i + Lw], base=T)
+            i += Lw
+            c = symbols_to_integer(y[i : i + M], base=T)
+            i += M
+            triples.append((d, l, c))
+        return triples
+
+    def triples_to_source(self, triples: list[tuple[int, int, int]]):
+        out: list[int] = []
+        for d, l, c in triples:
+            if d == 0 and l == 0:
+                out.append(c)
+            else:
+                start = len(out) - d
+                for k in range(l):
+                    out.append(out[start + k])
+                out.append(c)
+        return np.array(out, dtype=int)
+
+    def encode(self, input: npt.ArrayLike) -> npt.NDArray[np.integer]:
         r"""
         Encode a sequence of source symbols using optimized LZ77, emitting a base-T stream.
 
@@ -213,101 +281,18 @@ class LempelZiv77Code:
 
         Examples:
             >>> lz77 = komm.LempelZiv77Code(
-                ... source_cardinality=2,
-                ... target_cardinality=2,
-                ... window_size=16,
-                ... lookahead_size=4
-                ... )
+            ... source_cardinality=2,
+            ... target_cardinality=2,
+            ... window_size=16,
+            ... lookahead_size=4
+            ... )
             >>> lz77.encode(np.zeros(15, dtype=int))
             array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1,
             ... 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0])
 
         """
-        x = np.asarray(input, dtype=int)
-        if x.ndim != 1:
-            raise ValueError("'input' must be a 1D array")
-        if x.size == 0:
-            return np.array([], dtype=int)
-        if np.any((x < 0) | (x >= self.source_cardinality)):
-            raise ValueError("input symbols out of range")
-
-        # Store reference for hash table optimization
-        self._current_data = x
-
-        # Reset hash table for new encoding
-        self._init_hash_table()
-
-        T = self._target_cardinality
-        W = self._window_size
-        L = self._lookahead_size
-        D, Lw, M = self._D, self._Lw, self._M
-
-        out: list[int] = []
-        n = x.size
-        i = 0
-
-        # Show encoding header if verbose
-        if verbose:
-            print(f"Encoding {n} symbols with window_size={W}, lookahead_size={L}")
-            print("Generating triples:")
-
-        pbar = tqdm(total=n, desc="Compressing LZ77", delay=2.5)
-
-        while i < n:
-            # Remaining symbols; if only one left, no following 'c' exists => emit (0,0,c)
-            if i == n - 1:
-                d, l = 0, 0
-                c = int(x[i])
-
-                if verbose:
-                    print(f"Encoding triple: (d={d}, l={l}, c={c}) at position {i}")
-
-                out.extend(integer_to_symbols(d, base=T, width=D))
-                out.extend(integer_to_symbols(l, base=T, width=Lw))
-                out.extend(integer_to_symbols(c, base=T, width=M))
-                i += 1
-                pbar.update(1)
-                continue
-
-            # Build window and lookahead respecting limits.
-            win_start = max(0, i - W)
-            window = x[win_start:i]  # size up to W
-
-            # Ensure there is always a following symbol c => max length <= n - i - 1
-            max_l = min(L, n - i - 1)
-            lookahead = x[i : i + max_l]
-
-            # Update hash table for current position (optimization)
-            self._update_hash_table(x, i)
-
-            d, l = self._find_longest_match(window, lookahead)
-
-            if d == 0 or l == 0:
-                # No match: (0,0,c) with c = x[i]
-                d, l, c = 0, 0, int(x[i])
-                step = 1
-            else:
-                # Match found; c is the symbol after the match
-                c = int(x[i + l])
-                step = l + 1  # consume l matched + 1 following char
-
-            # Simple verbose output - just like the original
-            if verbose:
-                print(f"Encoding triple: (d={d}, l={l}, c={c}) at position {i}")
-
-            out.extend(integer_to_symbols(d, base=T, width=D))
-            out.extend(integer_to_symbols(l, base=T, width=Lw))
-            out.extend(integer_to_symbols(c, base=T, width=M))
-
-            i += step
-            pbar.update(step)
-
-        pbar.close()
-
-        if verbose:
-            print(f"Encoding complete: {n} input symbols -> {len(out)} output symbols")
-
-        return np.array(out, dtype=int)
+        triples = self.source_to_triples(input)
+        return self.triples_to_target(triples)
 
     def decode(self, input: npt.ArrayLike) -> npt.NDArray[np.integer]:
         r"""
@@ -322,64 +307,5 @@ class LempelZiv77Code:
         Raises:
             ValueError: If input stream is corrupted or invalid.
         """
-        T = self._target_cardinality
-        S = self._source_cardinality
-        D, Lw, M = self._D, self._Lw, self._M
-
-        y = np.asarray(input, dtype=int)
-        if y.ndim != 1:
-            raise ValueError("'input' must be a 1D array")
-        if y.size == 0:
-            return np.array([], dtype=int)
-        if np.any((y < 0) | (y >= T)):
-            raise ValueError("encoded symbols out of range for base T")
-
-        out: list[int] = []
-        i = 0
-        triple_syms = D + Lw + M
-
-        pbar = tqdm(total=y.size, desc="Decompressing LZ77", delay=2.5)
-
-        while i + triple_syms <= y.size:
-            d = symbols_to_integer(y[i : i + D], base=T)
-            i += D
-            l = symbols_to_integer(y[i : i + Lw], base=T)
-            i += Lw
-            c = symbols_to_integer(y[i : i + M], base=T)
-            i += M
-
-            pbar.update(triple_syms)
-
-            # sanity checks against malformed streams
-            if c >= S:
-                raise ValueError(f"Invalid stream: symbol c={c} not in [0,{S - 1}]")
-            if d == 0 and l != 0:
-                raise ValueError("Invalid stream: d=0 must imply l=0")
-            if l > self.lookahead_size:
-                raise ValueError("Invalid stream: length exceeds lookahead_size")
-
-            if d == 0 and l == 0:
-                out.append(c)
-                continue
-
-            # match copy with overlap (standard LZ77 behavior)
-            start = len(out) - d
-            if start < 0:
-                raise ValueError("Invalid stream: distance exceeds produced output")
-
-            for k in range(l):
-                out.append(
-                    out[start + k]
-                )  # may reference elements appended in this loop
-
-            out.append(c)
-
-        pbar.close()
-
-        if i != y.size:
-            raise ValueError(
-                "Invalid stream: leftover symbols not forming a complete triple"
-            )
-
-        return np.array(out, dtype=int)
-        return np.array(out, dtype=int)
+        triples = self.target_to_triples(input)
+        return self.triples_to_source(triples)
