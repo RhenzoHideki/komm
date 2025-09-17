@@ -4,7 +4,6 @@ from math import ceil, log
 
 import numpy as np
 import numpy.typing as npt
-from tqdm import tqdm
 
 from .util import integer_to_symbols, symbols_to_integer
 
