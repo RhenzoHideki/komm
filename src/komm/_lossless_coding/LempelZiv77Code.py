@@ -1,11 +1,12 @@
 from collections import defaultdict
 from dataclasses import dataclass
 from math import ceil, log
-from typing import Dict, List, Tuple
 
 import numpy as np
 import numpy.typing as npt
 from tqdm import tqdm
+
+from .util import integer_to_symbols, symbols_to_integer
 
 
 @dataclass
@@ -24,27 +25,23 @@ class LempelZiv77Code:
         lookahead_size: The lookahead buffer size $L$. Must be a number greater than or equal to $1$.
 
     Encoding format (fixed-width per triple):
-        Each triple $(d, l, c)$ represents:
-        - $d$: distance in $[0..W]$ (0 means "no match")
-        - $l$: length in $[0..L]$ (0 means "no match")
-        - $c$: next symbol in $[0..S-1]$
 
-        Each field is emitted in base-$T$ using:
-        - $D = \lceil \log_T(W+1) \rceil$ symbols for $d$
-        - $L_w = \lceil \log_T(L+1) \rceil$ symbols for $l$
-        - $M = \lceil \log_T(S) \rceil$ symbols for $c$
+    Each triple $(d, l, c)$ represents:
+
+    - $d$: distance in $[0..W]$ (0 means "no match")
+    - $l$: length in $[0..L]$ (0 means "no match")
+    - $c$: next symbol in $[0..S-1]$
+
+    Each field is emitted in base-$T$ using:
+
+    - $D = \lceil \log_T(W+1) \rceil$ symbols for $d$
+    - $L_w = \lceil \log_T(L+1) \rceil$ symbols for $l$
+    - $M = \lceil \log_T(S) \rceil$ symbols for $c$
 
     Examples:
         >>> lz77 = komm.LempelZiv77Code(source_cardinality=2, target_cardinality=2, window_size=16, lookahead_size=4)
-        >>> x = np.array([0,0,0,0,0,0,0,0], dtype=int)
-        >>> y = lz77.encode(x)  # Silent encoding
-        >>> y_verbose = lz77.encode(x, verbose=True)  # With triple printing
-        >>> bool(np.all(lz77.decode(y) == x))
-        True
 
     Notes:
-        - This implementation uses hash table optimization for O(1) pattern search vs O(W×L) naive search
-        - The encode method accepts a 'verbose' parameter for simple triple visualization
         - Matches are constrained to at most `lookahead_size` and ensure there is always a following symbol
         - The last source symbol (if any) is always emitted as (0, 0, c)
     """
@@ -87,35 +84,14 @@ class LempelZiv77Code:
 
     def _init_hash_table(self) -> None:
         """Initialize hash table for fast pattern lookup."""
-        self._hash_table: Dict[tuple, List[int]] = defaultdict(list)
-
-    def _integer_to_symbols(self, value: int, base: int, width: int) -> List[int]:
-        """Convert integer to list of symbols in specified base with fixed width."""
-        if value < 0:
-            raise ValueError("Value must be non-negative")
-
-        symbols = []
-        temp = value
-
-        for _ in range(width):
-            symbols.append(temp % base)
-            temp //= base
-
-        return list(reversed(symbols))
-
-    def _symbols_to_integer(self, symbols: np.ndarray, base: int) -> int:
-        """Convert list of symbols to integer."""
-        result = 0
-        for symbol in symbols:
-            result = result * base + symbol
-        return result
+        self._hash_table: dict[tuple[int, int], list[int]] = defaultdict(list)
 
     def _update_hash_table(
         self, data: np.ndarray, position: int, pattern_length: int = 3
     ) -> None:
         """Update hash table with new patterns for fast lookup."""
         if position + pattern_length <= len(data):
-            pattern = tuple(data[position : position + pattern_length])
+            pattern = tuple[int, int](data[position : position + pattern_length])
             self._hash_table[pattern].append(position)
 
             # Limit list size to prevent excessive growth
@@ -159,7 +135,7 @@ class LempelZiv77Code:
         # Use hash table optimization when possible
         if lookahead.size >= self._min_match_length:
             pattern_length = min(self._min_match_length, lookahead.size)
-            pattern = tuple(lookahead[:pattern_length])
+            pattern = tuple[int, int](lookahead[:pattern_length])
 
             if pattern in self._hash_table:
                 # Check potential matches from hash table
@@ -234,6 +210,18 @@ class LempelZiv77Code:
 
         Raises:
             ValueError: If input is not a 1D array or contains symbols outside valid range.
+
+        Examples:
+            >>> lz77 = komm.LempelZiv77Code(
+                ... source_cardinality=2,
+                ... target_cardinality=2,
+                ... window_size=16,
+                ... lookahead_size=4
+                ... )
+            >>> lz77.encode(np.zeros(15, dtype=int))
+            array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1,
+            ... 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0])
+
         """
         x = np.asarray(input, dtype=int)
         if x.ndim != 1:
@@ -274,9 +262,9 @@ class LempelZiv77Code:
                 if verbose:
                     print(f"Encoding triple: (d={d}, l={l}, c={c}) at position {i}")
 
-                out.extend(self._integer_to_symbols(d, base=T, width=D))
-                out.extend(self._integer_to_symbols(l, base=T, width=Lw))
-                out.extend(self._integer_to_symbols(c, base=T, width=M))
+                out.extend(integer_to_symbols(d, base=T, width=D))
+                out.extend(integer_to_symbols(l, base=T, width=Lw))
+                out.extend(integer_to_symbols(c, base=T, width=M))
                 i += 1
                 pbar.update(1)
                 continue
@@ -307,9 +295,9 @@ class LempelZiv77Code:
             if verbose:
                 print(f"Encoding triple: (d={d}, l={l}, c={c}) at position {i}")
 
-            out.extend(self._integer_to_symbols(d, base=T, width=D))
-            out.extend(self._integer_to_symbols(l, base=T, width=Lw))
-            out.extend(self._integer_to_symbols(c, base=T, width=M))
+            out.extend(integer_to_symbols(d, base=T, width=D))
+            out.extend(integer_to_symbols(l, base=T, width=Lw))
+            out.extend(integer_to_symbols(c, base=T, width=M))
 
             i += step
             pbar.update(step)
@@ -353,18 +341,18 @@ class LempelZiv77Code:
         pbar = tqdm(total=y.size, desc="Decompressing LZ77", delay=2.5)
 
         while i + triple_syms <= y.size:
-            d = self._symbols_to_integer(y[i : i + D], base=T)
+            d = symbols_to_integer(y[i : i + D], base=T)
             i += D
-            l = self._symbols_to_integer(y[i : i + Lw], base=T)
+            l = symbols_to_integer(y[i : i + Lw], base=T)
             i += Lw
-            c = self._symbols_to_integer(y[i : i + M], base=T)
+            c = symbols_to_integer(y[i : i + M], base=T)
             i += M
 
             pbar.update(triple_syms)
 
             # sanity checks against malformed streams
             if c >= S:
-                raise ValueError(f"Invalid stream: symbol c={c} not in [0,{S-1}]")
+                raise ValueError(f"Invalid stream: symbol c={c} not in [0,{S - 1}]")
             if d == 0 and l != 0:
                 raise ValueError("Invalid stream: d=0 must imply l=0")
             if l > self.lookahead_size:
@@ -394,25 +382,4 @@ class LempelZiv77Code:
             )
 
         return np.array(out, dtype=int)
-
-    # Utility method for compression analysis
-    def get_compression_stats(
-        self, original_size: int, compressed_size: int
-    ) -> Dict[str, float]:
-        """Calculate comprehensive compression statistics."""
-        if original_size == 0:
-            return {
-                "compression_ratio": 0.0,
-                "space_saved_percent": 0.0,
-                "compression_efficiency": 0.0,
-            }
-
-        ratio = compressed_size / original_size
-        space_saved = max(0, (original_size - compressed_size) / original_size)
-        efficiency = (1 - ratio) * 100 if ratio <= 1 else -((ratio - 1) * 100)
-
-        return {
-            "compression_ratio": ratio,
-            "space_saved_percent": space_saved * 100,
-            "compression_efficiency": efficiency,
-        }
+        return np.array(out, dtype=int)

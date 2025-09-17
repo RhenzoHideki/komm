@@ -198,7 +198,7 @@ __all__ = [
     "FanoCode",
     "FixedToVariableCode",
     "HuffmanCode",
-    "LempelZiv77Code",    
+    "LempelZiv77Code",
     "LempelZiv78Code",
     "LempelZivWelchCode",
     "ShannonCode",
