@@ -19,3 +19,4 @@ pdm.lock
 .ttxfolder
 .venv
 .vscode
+bch_codes.json

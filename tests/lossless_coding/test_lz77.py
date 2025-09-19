@@ -91,6 +91,24 @@ def test_lz77_worst_case(k):
             4,
             (ceil(np.log2(8 + 1)) + ceil(np.log2(4 + 1)) + ceil(np.log2(5))) * 7,
         ),
+        # [Sayood, p. 122]
+        (
+            "abcdr",
+            "cabracadabrarrarrad",
+            [
+                (0, 0, 2),
+                (0, 0, 0),
+                (0, 0, 1),
+                (0, 0, 4),
+                (3, 1, 2),
+                (5, 1, 3),
+                (7, 4, 4),
+                (3, 5, 3),
+            ],
+            13,
+            6,
+            (ceil(np.log2(13 + 1)) + ceil(np.log2(6 + 1)) + ceil(np.log2(5))) * 8,
+        ),
     ],
 )
 def test_lz77_examples(
