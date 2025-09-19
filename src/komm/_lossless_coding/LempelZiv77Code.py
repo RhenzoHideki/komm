@@ -40,9 +40,9 @@ class LempelZiv77Code:
     """
 
     source_cardinality: int
-    target_cardinality: int
     window_size: int
     lookahead_size: int
+    target_cardinality: int
 
     def __post_init__(self) -> None:
         if self.source_cardinality < 2:
