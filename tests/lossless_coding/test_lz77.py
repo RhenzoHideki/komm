@@ -55,12 +55,21 @@ def test_lz77_worst_case(k):
 
 
 @pytest.mark.parametrize(
-    "alphabet, message, window_size, lookahead_size, len_compressed",
+    "alphabet, message, triples, window_size, lookahead_size, len_compressed",
     [
         # [Abrantes, p. 26]
         (
             "ABC",
             "AAAABABCCAABACCAAAABC",
+            [
+                (0, 0, 0),
+                (1, 3, 1),
+                (2, 2, 2),
+                (1, 1, 0),
+                (7, 3, 2),
+                (6, 3, 0),
+                (8, 2, 2),
+            ],
             12,
             4,
             (ceil(np.log2(8 + 1)) + ceil(np.log2(4 + 1)) + ceil(np.log2(3))) * 7,
@@ -69,13 +78,24 @@ def test_lz77_worst_case(k):
         (
             "abdkr",
             "abadakadabra",
+            [
+                (0, 0, 0),
+                (0, 0, 1),
+                (2, 1, 2),
+                (4, 1, 3),
+                (4, 3, 1),
+                (0, 0, 4),
+                (0, 0, 0),
+            ],
             8,
             4,
             (ceil(np.log2(8 + 1)) + ceil(np.log2(4 + 1)) + ceil(np.log2(5))) * 7,
         ),
     ],
 )
-def test_lz77_examples(alphabet, message, window_size, lookahead_size, len_compressed):
+def test_lz77_examples(
+    alphabet, message, triples, window_size, lookahead_size, len_compressed
+):
     code = komm.LempelZiv77Code(
         source_cardinality=len(alphabet),
         target_cardinality=2,
@@ -86,6 +106,8 @@ def test_lz77_examples(alphabet, message, window_size, lookahead_size, len_compr
     msg_indices = [alphabet.index(char) for char in message]
 
     # Add verbose=True to see the triples being generated
+    print(code.source_to_triples(msg_indices))
+    np.testing.assert_equal(code.source_to_triples(msg_indices), triples)
     compressed = code.encode(msg_indices)
 
     assert len(compressed) == len_compressed
