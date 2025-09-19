@@ -1,4 +1,3 @@
-from collections import defaultdict
 from dataclasses import dataclass
 from math import ceil, log
 
@@ -8,192 +7,16 @@ import numpy.typing as npt
 from .util import integer_to_symbols, symbols_to_integer
 
 
-class _LZ77HashMatcher:
-    """
-    Internal hash-based pattern matching utility for LZ77 compression.
-
-    This class encapsulates hash table operations and optimized pattern matching
-    logic for internal use by LempelZiv77Code.
-    """
-
-    def __init__(
-        self,
-        min_match_length: int = 3,
-        max_hash_entries: int = 10,
-        pattern_length: int = 3,
-    ) -> None:
-        self.min_match_length: int = min_match_length
-        self.max_hash_entries: int = max_hash_entries
-        self.pattern_length: int = pattern_length
-        self._hash_table: dict[tuple[int, ...], list[int]] = defaultdict(list)
-        self._current_data: np.ndarray | None = None
-
-    def initialize(self, data: np.ndarray) -> None:
-        """Initialize the matcher with new data."""
-        self._current_data = data
-        self.clear_hash_table()
-
-    def clear_hash_table(self) -> None:
-        """Clear the hash table for a fresh start."""
-        self._hash_table.clear()
-
-    def update_hash_table(self, position: int) -> None:
-        """Update hash table with pattern at given position."""
-        if self._current_data is None or position + self.pattern_length > len(
-            self._current_data
-        ):
-            return
-
-        pattern: tuple[int, ...] = tuple(
-            self._current_data[position : position + self.pattern_length]
-        )
-        self._hash_table[pattern].append(position)
-
-        # Limit list size to prevent excessive memory usage
-        if len(self._hash_table[pattern]) > self.max_hash_entries:
-            self._hash_table[pattern] = self._hash_table[pattern][
-                -self.max_hash_entries :
-            ]
-
-    def find_longest_match_optimized(
-        self,
-        window: npt.NDArray[np.integer],
-        lookahead: npt.NDArray[np.integer],
-        current_absolute_pos: int,
-    ) -> tuple[int, int]:
-        """Find longest match using hash table optimization with fallback."""
-        n: int = window.size
-        if n == 0 or lookahead.size == 0:
-            return 0, 0
-
-        best_d: int = 0
-        max_l: int = 0
-
-        # Try hash table optimization first
-        if lookahead.size >= self.min_match_length:
-            max_l, best_d = self._try_hash_matches(
-                window, lookahead, current_absolute_pos, n
-            )
-
-        # Fallback to brute force if hash didn't find good matches
-        if max_l < self.min_match_length:
-            max_l, best_d = self._try_brute_force_matches(
-                window, lookahead, max_l, best_d
-            )
-
-        return (best_d, max_l) if max_l > 0 else (0, 0)
-
-    def _try_hash_matches(
-        self,
-        window: npt.NDArray[np.integer],
-        lookahead: npt.NDArray[np.integer],
-        current_absolute_pos: int,
-        window_size: int,
-    ) -> tuple[int, int]:
-        """Try to find matches using hash table."""
-        max_l: int = 0
-        best_d: int = 0
-
-        pattern_length: int = min(self.pattern_length, lookahead.size)
-        pattern: tuple[int, ...] = tuple(lookahead[:pattern_length])
-
-        if pattern not in self._hash_table:
-            return max_l, best_d
-
-        # Check potential matches from hash table
-        for match_pos in reversed(self._hash_table[pattern]):
-            # Convert absolute position to relative position in window
-            if (
-                match_pos < current_absolute_pos - window_size
-                or match_pos >= current_absolute_pos
-            ):
-                continue
-
-            window_pos: int = match_pos - (current_absolute_pos - window_size)
-            if window_pos < 0 or window_pos >= window_size:
-                continue
-
-            d: int = window_size - window_pos  # distance from current position
-            if d <= 0:
-                continue
-
-            # Extend match with overlap support
-            l: int = 0
-            while l < lookahead.size and window[window_pos + (l % d)] == lookahead[l]:
-                l += 1
-
-            if l >= self.min_match_length and l > max_l:
-                max_l = l
-                best_d = d
-
-                # Early termination if maximum possible match found
-                if max_l == lookahead.size:
-                    break
-
-        return max_l, best_d
-
-    def _try_brute_force_matches(
-        self,
-        window: npt.NDArray[np.integer],
-        lookahead: npt.NDArray[np.integer],
-        current_max_l: int,
-        current_best_d: int,
-    ) -> tuple[int, int]:
-        """Fallback brute force matching."""
-        max_l: int = current_max_l
-        best_d: int = current_best_d
-
-        # Try every start position in the window
-        for start in range(window.size):
-            d: int = window.size - start  # distance from current position
-            if d <= 0:
-                continue
-
-            # Compare with overlap: the source is periodic with period d
-            l: int = 0
-            while l < lookahead.size and window[start + (l % d)] == lookahead[l]:
-                l += 1
-
-            if l > max_l:
-                max_l = l
-                best_d = d
-
-            if max_l == lookahead.size:  # can't do better
-                break
-
-        return max_l, best_d
-
-    def get_hash_stats(self) -> dict[str, int]:
-        """Get hash table statistics for debugging/monitoring."""
-        if not self._hash_table:
-            return {
-                "total_patterns": 0,
-                "total_positions": 0,
-                "max_bucket_size": 0,
-                "avg_bucket_size": 0,
-            }
-
-        total_positions: int = sum(
-            len(positions) for positions in self._hash_table.values()
-        )
-        return {
-            "total_patterns": len(self._hash_table),
-            "total_positions": total_positions,
-            "max_bucket_size": max(
-                len(positions) for positions in self._hash_table.values()
-            ),
-            "avg_bucket_size": int(total_positions / len(self._hash_table)),
-        }
-
-
 @dataclass
 class LempelZiv77Code:
     r"""
-    Lempel–Ziv 77 (LZ77) code with a sliding window and fixed-width triple (d, l, c) output.
+    Lempel–Ziv 77 (LZ77 or LZ1) code.
 
-    LZ77 is a lossless data compression algorithm that uses a sliding window to find matches
-    between the current position and previous occurrences, encoding them as triples.
-    This implementation uses hash table optimization for faster pattern matching.
+    It is a lossless data compression algorithm
+    that replaces repeated data with references to previous occurrences within a sliding window.
+    The algorithm achieves compression by identifying matches between the current position and
+    patterns within the search window, encoding them as (distance, length, next_symbol) triples.
+    For more details, see standard references on data compression algorithms.
 
     Parameters:
         source_cardinality: The source cardinality $S$. Must be an integer greater than or equal to $2$.
@@ -201,15 +24,25 @@ class LempelZiv77Code:
         window_size: Sliding window size $W$. Must be an integer greater than or equal to $1$.
         lookahead_size: Lookahead buffer size $L$. Must be an integer greater than or equal to $1$.
 
+    Encoding format (fixed-width per triple):
+        d: distance in [0..W]  (0 means "no match")
+        l: length   in [0..L]  (0 means "no match")
+        c: next symbol in [0..S-1]
+
+        Each field is emitted in base-T using:
+            D = ceil(log(W+1, T)) symbols for d
+            Lw = ceil(log(L+1, T)) symbols for l
+            M = ceil(log(S,   T)) symbols for c
+
+
     Examples:
-        >>> lz77 = komm.LempelZiv77Code(4, 2, 8, 4)  # 4-ary source, binary target
-        >>> lz77 = komm.LempelZiv77Code(2, 2, 16, 8)  # Binary source and target
+        >>> lz77 = komm.LempelZiv77Code(source_cardinality=2, target_cardinality=2, window_size=16, lookahead_size=4)
     """
 
     source_cardinality: int
+    target_cardinality: int
     window_size: int
     lookahead_size: int
-    target_cardinality: int = 2
 
     def __post_init__(self) -> None:
         if self.source_cardinality < 2:
@@ -228,25 +61,31 @@ class LempelZiv77Code:
         self._Lw: int = max(1, ceil(float(log(self.lookahead_size + 1, T))))
         self._M: int = max(1, ceil(float(log(S, T))))
 
-        # Initialize hash-based matcher
-        self._matcher: _LZ77HashMatcher = _LZ77HashMatcher(
-            min_match_length=3, max_hash_entries=10, pattern_length=3
-        )
-
     def encode(self, input: npt.ArrayLike) -> npt.NDArray[np.integer]:
         r"""
-        Encodes a sequence of source symbols using the LZ77 encoding algorithm.
+        Encode a sequence of source symbols using optimized LZ77, emitting a base-T stream.
 
-        Parameters:
-            input: The sequence of symbols to be encoded. Must be a 1D-array with elements in $[0:S)$ (where $S$ is the source cardinality of the code).
+        Args:
+            input: 1D array with elements in $[0, S)$
+            verbose: If True, prints each triple (d, l, c) as it's generated
 
         Returns:
-            output: The sequence of encoded symbols. It is a 1D-array with elements in $[0:T)$ (where $T$ is the target cardinality of the code).
+            1D array of base-$T$ symbols representing concatenated triples $(d, l, c)$.
+
+        Raises:
+            ValueError: If input is not a 1D array or contains symbols outside valid range.
 
         Examples:
-            >>> lz77 = komm.LempelZiv77Code(4, 2, 8, 4)
-            >>> lz77.encode([0, 1, 0, 1, 2, 3])
-            array([...])
+            >>> lz77 = komm.LempelZiv77Code(
+            ... source_cardinality=2,
+            ... target_cardinality=2,
+            ... window_size=16,
+            ... lookahead_size=4
+            ... )
+            >>> lz77.encode(np.zeros(15, dtype=int))
+            array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1,
+                0, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0])
+
         """
         triples: list[tuple[int, int, int]] = self.source_to_triples(input)
         return self.triples_to_target(triples)
@@ -262,16 +101,21 @@ class LempelZiv77Code:
             output: The sequence of decoded symbols. It is a 1D-array with elements in $[0:S)$ (where $S$ is the source cardinality of the code).
 
         Examples:
-            >>> lz77 = komm.LempelZiv77Code(4, 2, 8, 4)
-            >>> encoded = lz77.encode([0, 1, 0, 1, 2, 3])
-            >>> lz77.decode(encoded)
-            array([0, 1, 0, 1, 2, 3])
+            >>> message = ([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1,0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0])
+            >>> lz77 = komm.LempelZiv77Code(
+            ... source_cardinality=2,
+            ... target_cardinality=2,
+            ... window_size=16,
+            ... lookahead_size=4
+            ... )
+            >>> lz77.decode(message)
+            array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         """
         triples: list[tuple[int, int, int]] = self.target_to_triples(input)
         return self.triples_to_source(triples)
 
     def source_to_triples(self, input: npt.ArrayLike) -> list[tuple[int, int, int]]:
-        """Convert source symbols to list of LZ77 triples (d, l, c) using hash optimization."""
+        """Convert source symbols to list of LZ77 triples (d, l, c)."""
         x: npt.NDArray[np.integer] = np.asarray(input, dtype=int)
         if x.ndim != 1:
             raise ValueError("'input' must be a 1D array")
@@ -286,9 +130,6 @@ class LempelZiv77Code:
         n: int = x.size
         i: int = 0
 
-        # Initialize the hash matcher with current data
-        self._matcher.initialize(x)
-
         while i < n:
             if i == n - 1:
                 triples.append((0, 0, int(x[i])))
@@ -300,25 +141,51 @@ class LempelZiv77Code:
             max_l: int = min(L, n - i - 1)
             lookahead: npt.NDArray[np.integer] = x[i : i + max_l]
 
-            # Update hash table with current position
-            self._matcher.update_hash_table(i)
-
-            # Find longest match using hash optimization
-            d: int
-            l: int
-            d, l = self._matcher.find_longest_match_optimized(window, lookahead, i)
+            d, l = self._find_longest_match(window, lookahead)
 
             if d == 0 or l == 0:
                 d, l, c = 0, 0, int(x[i])
                 step: int = 1
             else:
-                c: int = int(x[i + l])
+                c = int(x[i + l])
                 step = l + 1
 
             triples.append((d, l, c))
             i += step
 
         return triples
+
+    def _find_longest_match(
+        self, window: npt.NDArray[np.integer], lookahead: npt.NDArray[np.integer]
+    ) -> tuple[int, int]:
+        """Find longest match in window for lookahead buffer."""
+        n: int = window.size
+        if n == 0 or lookahead.size == 0:
+            return 0, 0
+
+        best_d: int = 0
+        max_l: int = 0
+
+        for start in range(n):
+            d: int = n - start
+            if d <= 0:
+                continue
+
+            l: int = 0
+            while l < lookahead.size and window[start + (l % d)] == lookahead[l]:
+                l += 1
+
+            if l > max_l:
+                max_l = l
+                best_d = d
+
+            if max_l == lookahead.size:
+                break
+
+        if max_l == 0:
+            return 0, 0
+
+        return best_d, max_l
 
     def triples_to_target(
         self, triples: list[tuple[int, int, int]]
@@ -401,11 +268,3 @@ class LempelZiv77Code:
             out.append(c)
 
         return np.array(out, dtype=int)
-
-    def get_hash_stats(self) -> dict[str, int]:
-        """Get hash table statistics for monitoring and debugging."""
-        return self._matcher.get_hash_stats()
-
-    def clear_hash_cache(self) -> None:
-        """Clear the hash cache - useful for processing multiple independent streams."""
-        self._matcher.clear_hash_table()
