@@ -8,14 +8,7 @@ import numpy.typing as npt
 from .util import integer_to_symbols, symbols_to_integer
 
 
-class _LZ77HashMatcher:
-    """
-    Internal hash-based pattern matching utility for LZ77 compression.
-
-    This class encapsulates hash table operations and optimized pattern matching
-    logic for internal use by LempelZiv77Code.
-    """
-
+class _HashMatcher:
     def __init__(
         self,
         min_match_length: int = 3,
@@ -29,16 +22,13 @@ class _LZ77HashMatcher:
         self._current_data: np.ndarray | None = None
 
     def initialize(self, data: np.ndarray) -> None:
-        """Initialize the matcher with new data."""
         self._current_data = data
         self.clear_hash_table()
 
     def clear_hash_table(self) -> None:
-        """Clear the hash table for a fresh start."""
         self._hash_table.clear()
 
     def update_hash_table(self, position: int) -> None:
-        """Update hash table with pattern at given position."""
         if self._current_data is None or position + self.pattern_length > len(
             self._current_data
         ):
@@ -61,7 +51,6 @@ class _LZ77HashMatcher:
         lookahead: npt.NDArray[np.integer],
         current_absolute_pos: int,
     ) -> tuple[int, int]:
-        """Find longest match using hash table optimization with fallback."""
         n: int = window.size
         if n == 0 or lookahead.size == 0:
             return 0, 0
@@ -90,7 +79,6 @@ class _LZ77HashMatcher:
         current_absolute_pos: int,
         window_size: int,
     ) -> tuple[int, int]:
-        """Try to find matches using hash table."""
         max_l: int = 0
         best_d: int = 0
 
@@ -164,7 +152,6 @@ class _LZ77HashMatcher:
         return max_l, best_d
 
     def get_hash_stats(self) -> dict[str, int]:
-        """Get hash table statistics for debugging/monitoring."""
         if not self._hash_table:
             return {
                 "total_patterns": 0,
@@ -189,11 +176,13 @@ class _LZ77HashMatcher:
 @dataclass
 class LempelZiv77Code:
     r"""
-    Lempel–Ziv 77 (LZ77) code with a sliding window and fixed-width triple (d, l, c) output.
+    Lempel–Ziv 77 (LZ77 or LZ1) code.
 
-    LZ77 is a lossless data compression algorithm that uses a sliding window to find matches
-    between the current position and previous occurrences, encoding them as triples.
-    This implementation uses hash table optimization for faster pattern matching.
+    It is a lossless data compression algorithm
+    that replaces repeated data with references to previous occurrences within a sliding window.
+    The algorithm achieves compression by identifying matches between the current position and
+    patterns within the search window, encoding them as (distance, length, next_symbol) triples.
+    For more details, see standard references on data compression algorithms.
 
     Parameters:
         source_cardinality: The source cardinality $S$. Must be an integer greater than or equal to $2$.
@@ -201,9 +190,19 @@ class LempelZiv77Code:
         window_size: Sliding window size $W$. Must be an integer greater than or equal to $1$.
         lookahead_size: Lookahead buffer size $L$. Must be an integer greater than or equal to $1$.
 
+    Encoding format (fixed-width per triple):
+        d: distance in [0..W]  (0 means "no match")
+        l: length   in [0..L]  (0 means "no match")
+        c: next symbol in [0..S-1]
+
+        Each field is emitted in base-T using:
+            D = ceil(log(W+1, T)) symbols for d
+            Lw = ceil(log(L+1, T)) symbols for l
+            M = ceil(log(S,   T)) symbols for c
+
+
     Examples:
-        >>> lz77 = komm.LempelZiv77Code(4, 2, 8, 4)  # 4-ary source, binary target
-        >>> lz77 = komm.LempelZiv77Code(2, 2, 16, 8)  # Binary source and target
+        >>> lz77 = komm.LempelZiv77Code(source_cardinality=2, target_cardinality=2, window_size=16, lookahead_size=4)
     """
 
     source_cardinality: int
@@ -229,24 +228,35 @@ class LempelZiv77Code:
         self._M: int = max(1, ceil(float(log(S, T))))
 
         # Initialize hash-based matcher
-        self._matcher: _LZ77HashMatcher = _LZ77HashMatcher(
+        self._matcher: _HashMatcher = _HashMatcher(
             min_match_length=3, max_hash_entries=10, pattern_length=3
         )
 
     def encode(self, input: npt.ArrayLike) -> npt.NDArray[np.integer]:
         r"""
-        Encodes a sequence of source symbols using the LZ77 encoding algorithm.
+        Encode a sequence of source symbols using optimized LZ77, emitting a base-T stream.
 
-        Parameters:
-            input: The sequence of symbols to be encoded. Must be a 1D-array with elements in $[0:S)$ (where $S$ is the source cardinality of the code).
+        Args:
+            input: 1D array with elements in $[0, S)$
+            verbose: If True, prints each triple (d, l, c) as it's generated
 
         Returns:
-            output: The sequence of encoded symbols. It is a 1D-array with elements in $[0:T)$ (where $T$ is the target cardinality of the code).
+            1D array of base-$T$ symbols representing concatenated triples $(d, l, c)$.
+
+        Raises:
+            ValueError: If input is not a 1D array or contains symbols outside valid range.
 
         Examples:
-            >>> lz77 = komm.LempelZiv77Code(4, 2, 8, 4)
-            >>> lz77.encode([0, 1, 0, 1, 2, 3])
-            array([...])
+            >>> lz77 = komm.LempelZiv77Code(
+            ... source_cardinality=2,
+            ... target_cardinality=2,
+            ... window_size=16,
+            ... lookahead_size=4
+            ... )
+            >>> lz77.encode(np.zeros(15, dtype=int))
+            array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1,
+                0, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0])
+
         """
         triples: list[tuple[int, int, int]] = self.source_to_triples(input)
         return self.triples_to_target(triples)
@@ -262,10 +272,15 @@ class LempelZiv77Code:
             output: The sequence of decoded symbols. It is a 1D-array with elements in $[0:S)$ (where $S$ is the source cardinality of the code).
 
         Examples:
-            >>> lz77 = komm.LempelZiv77Code(4, 2, 8, 4)
-            >>> encoded = lz77.encode([0, 1, 0, 1, 2, 3])
-            >>> lz77.decode(encoded)
-            array([0, 1, 0, 1, 2, 3])
+            >>> message = ([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1,0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0])
+            >>> lz77 = komm.LempelZiv77Code(
+            ... source_cardinality=2,
+            ... target_cardinality=2,
+            ... window_size=16,
+            ... lookahead_size=4
+            ... )
+            >>> lz77.decode(message)
+            array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         """
         triples: list[tuple[int, int, int]] = self.target_to_triples(input)
         return self.triples_to_source(triples)

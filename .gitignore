@@ -20,3 +20,4 @@ pdm.lock
 .venv
 .vscode
 bch_codes.json
+kompressors/

@@ -72,7 +72,8 @@ def test_lz77_worst_case(k):
             ],
             12,
             4,
-            (ceil(np.log2(8 + 1)) + ceil(np.log2(4 + 1)) + ceil(np.log2(3))) * 7,
+            (ceil(np.log2(8 + 1)) + ceil(np.log2(4 + 1)) + ceil(np.log2(len("ABC"))))
+            * 7,
         ),
         # [https://blog.coderspirit.xyz/blog/2023/06/04/exploring-the-lz77-algorithm]
         (
@@ -89,7 +90,8 @@ def test_lz77_worst_case(k):
             ],
             8,
             4,
-            (ceil(np.log2(8 + 1)) + ceil(np.log2(4 + 1)) + ceil(np.log2(5))) * 7,
+            (ceil(np.log2(8 + 1)) + ceil(np.log2(4 + 1)) + ceil(np.log2(len("abdkr"))))
+            * 7,
         ),
         # [Sayood, p. 122]
         (
@@ -107,7 +109,8 @@ def test_lz77_worst_case(k):
             ],
             13,
             6,
-            (ceil(np.log2(13 + 1)) + ceil(np.log2(6 + 1)) + ceil(np.log2(5))) * 8,
+            (ceil(np.log2(13 + 1)) + ceil(np.log2(6 + 1)) + ceil(np.log2(len("abcdr"))))
+            * 8,
         ),
     ],
 )
